@@ -3,55 +3,48 @@ import streamlit as st
 import pandas as pd
 from pybaseball import statcast, playerid_lookup
 from datetime import date
-import datetime
 
-st.title("⚾ MLB Pitcher Weak Spot Analyzer")
+st.title("⚾ Pitcher Weak Spot Analyzer")
+st.markdown("Shows the batting order position (1–9) that hits the most HRs against selected pitchers.")
 
-st.markdown("""
-This app shows which **batting order slot (1–9)** has hit the most home runs against a selected pitcher using Statcast data.
-""")
-
-# Get today's date
-today = date.today()
-
-# List of sample pitchers for selection (you can expand or automate this)
-pitcher_options = {
+# Pitcher selection
+pitchers = {
     "Mike Soroka": ("Soroka", "Mike"),
-    "Logan Webb": ("Webb", "Logan"),
-    "Gerrit Cole": ("Cole", "Gerrit"),
-    "Zac Gallen": ("Gallen", "Zac"),
+    "Mason Birdsong": ("Birdsong", "Mason"),
     "Blake Snell": ("Snell", "Blake"),
-    "Max Fried": ("Fried", "Max"),
+    "Zac Gallen": ("Gallen", "Zac"),
     "Corbin Burnes": ("Burnes", "Corbin")
 }
+pitcher_name = st.selectbox("Choose a pitcher:", list(pitchers.keys()))
+last_name, first_name = pitchers[pitcher_name]
 
-# Select pitcher
-selected_pitcher = st.selectbox("Choose a pitcher:", list(pitcher_options.keys()))
-last_name, first_name = pitcher_options[selected_pitcher]
+# Look up pitcher ID
+lookup = playerid_lookup(last_name, first_name)
+match = lookup[
+    (lookup['name_first'].str.lower() == first_name.lower()) &
+    (lookup['name_last'].str.lower() == last_name.lower())
+]
 
-# Get MLBAM ID
-s = playerid_lookup(last_name, first_name)
-if s.empty:
-    st.error("Pitcher not found in database.")
+if match.empty:
+    st.error(f"❌ Could not find player ID for {pitcher_name}.")
 else:
-    pitcher_id = s.loc[s['name_first'] == first_name, 'key_mlbam'].values[0]
+    pitcher_id = match['key_mlbam'].values[0]
+    st.info(f"Pitcher ID: {pitcher_id}")
 
-    # Fetch Statcast data
+    # Fetch statcast data
+    start_date = "2024-01-01"
+    end_date = date.today().strftime("%Y-%m-%d")
     with st.spinner("Fetching Statcast data..."):
-        start_dt = '2024-01-01'
-        end_dt = today.strftime('%Y-%m-%d')
-        data = statcast(start_dt=start_dt, end_dt=end_dt, pitcher=pitcher_id)
+        data = statcast(start_dt=start_date, end_dt=end_date, pitcher=pitcher_id)
 
-    # Filter home runs and group by batting order
+    # Filter HRs
     hr_data = data[data['events'] == 'home_run']
-    order_counts = hr_data['batting_order'].value_counts().sort_index()
-    df = order_counts.to_frame("HRs Allowed")
-
-    st.subheader(f"📊 HRs Allowed by Batting Order Slot — {selected_pitcher}")
-    if not df.empty:
-        st.bar_chart(df)
-        worst_slot = df['HRs Allowed'].idxmax()
-        worst_hr = df['HRs Allowed'].max()
-        st.markdown(f"### 🚨 **{selected_pitcher}** gives up the most HRs to slot **#{worst_slot}** with **{worst_hr} HRs**.")
+    if 'batting_order' in hr_data.columns and not hr_data.empty:
+        hr_counts = hr_data['batting_order'].value_counts().sort_index()
+        df = pd.DataFrame(hr_counts).reset_index()
+        df.columns = ['Batting Order Slot', 'HRs Allowed']
+        st.bar_chart(df.set_index('Batting Order Slot'))
+        max_row = df.loc[df['HRs Allowed'].idxmax()]
+        st.markdown(f"### 🚨 Weakest slot: **#{int(max_row['Batting Order Slot'])}** — {int(max_row['HRs Allowed'])} HRs")
     else:
-        st.success("🎉 No home runs allowed by this pitcher in the selected date range.")
+        st.success("🎉 No HRs allowed by this pitcher during the selected period.")
